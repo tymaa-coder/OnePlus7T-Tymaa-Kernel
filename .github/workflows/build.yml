@@ -137,8 +137,8 @@ jobs:
 
           grep -E "CONFIG_SECURITY_SELINUX(_BOOTPARAM|_DEVELOP|_DISABLE)?=|CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE" out/.config
 
-      # Build Image.gz + dtbo.img (without piping into tail so errors fail immediately)
-      - name: Build Image.gz + dtbo.img
+      # Build Image.gz + dtbs (without piping into tail so errors fail immediately)
+      - name: Build Image.gz + dtbs
         working-directory: ${{ env.KERNEL_DIR }}
         env:
           KBUILD_BUILD_VERSION: ${{ env.KBUILD_BUILD_VERSION }}
@@ -150,19 +150,17 @@ jobs:
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
             HOSTCC=clang \
             HOSTCXX=clang++ \
-            Image.gz dtbo.img
+            Image.gz dtbs
 
       # Verify build artifacts
       - name: Verify build artifacts
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           ls -la out/arch/arm64/boot/Image.gz
-          ls -la out/arch/arm64/boot/dtbo.img
-          DTB=$(find out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
-          [ -z "$DTB" ] && DTB=$(find out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
-          [ -z "$DTB" ] && DTB=$(find out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
-          echo "[*] DTB: $DTB"
-          ls -la "$DTB"
+          echo "[*] All DTB files:"
+          find out/arch/arm64/boot/dts -type f -name "*.dtb" | sort
+          echo "[*] Hotdogb-specific DTBs:"
+          find out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | sort
           make -s O=out ARCH=arm64 kernelversion
 
       # Pack AnyKernel3 ZIP
@@ -178,12 +176,11 @@ jobs:
           mkdir -p dtb/
 
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz .
-          cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtbo.img .
 
-          DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
-          [ -z "$DTB" ] && DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
-          [ -z "$DTB" ] && DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
-          cp "$DTB" dtb/
+          # Copy all DTB files from the dts directory
+          cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts/*.dtb dtb/ 2>/dev/null || true
+          echo "[*] Copied DTB files:"
+          ls -la dtb/ 2>/dev/null || echo "[!] No DTB files found"
 
           zip -r9 "$ZIP_NAME" * -x ".git*" "README*" "*placeholder*" "*.zip" 2>/dev/null
           echo "zip-name=$ZIP_NAME" >> $GITHUB_OUTPUT
