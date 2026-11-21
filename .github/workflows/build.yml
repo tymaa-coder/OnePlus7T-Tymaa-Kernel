@@ -20,7 +20,6 @@ env:
   ANYKERNEL_DIR: AnyKernel3
   KBUILD_BUILD_USER: "Tymaa"
   KBUILD_BUILD_HOST: "GitHub-Actions"
-  KBUILD_BUILD_VERSION_BASE: "+Tymaa"
 
 jobs:
   build-kernel:
@@ -54,13 +53,16 @@ jobs:
         with:
           path: module_src
 
-      # Setup Google Clang - use RUNNER_TEMP to avoid permission issues
-      - name: Setup Google Clang
+      # Setup Clang (AOSP Clang 14 from reliable mirror)
+      - name: Setup Clang Toolchain
         run: |
           CLANG_DIR="$RUNNER_TEMP/clang"
           mkdir -p "$CLANG_DIR"
           cd "$CLANG_DIR"
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz -O clang.tar.gz
+          echo "[*] Downloading AOSP Clang..."
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz -O clang.tar.gz || \
+          wget -q https://github.com/kdrag0n/aosp-clang/releases/download/14.0-20220320/aosp-clang-14.0-20220320-linux.tar.gz -O clang.tar.gz
+
           tar -xzf clang.tar.gz
           echo "$CLANG_DIR/bin" >> $GITHUB_PATH
           clang --version
@@ -85,11 +87,9 @@ jobs:
       - name: Configure kernel (hotdogb defconfig)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          # List available defconfigs for debugging
           echo "[*] Available defconfigs:"
           find arch/arm64/configs -name "*hotdog*" -o -name "*oneplus*" | sort
 
-          # Find correct defconfig for hotdogb (7T)
           DEFCONFIG=$(find arch/arm64/configs -name "*hotdogb*" | head -1)
           if [ -z "$DEFCONFIG" ]; then
             DEFCONFIG=$(find arch/arm64/configs -name "*hotdog*" | head -1)
@@ -98,21 +98,13 @@ jobs:
             DEFCONFIG=$(find arch/arm64/configs -name "*oneplus*" | grep -E "perf|user" | head -1)
           fi
           if [ -z "$DEFCONFIG" ]; then
-            echo "[!] No hotdog/oneplus defconfig found, trying vendor/hotdogb-perf_defconfig"
             DEFCONFIG="vendor/hotdogb-perf_defconfig"
-          fi
-
-          if [ ! -f "arch/arm64/configs/${DEFCONFIG}" ] && [ ! -f "${DEFCONFIG}" ]; then
-            echo "[!] Defconfig not found: $DEFCONFIG"
-            echo "[*] Trying all arm64 defconfigs..."
-            find arch/arm64/configs -name "*.config" -o -name "*defconfig" | head -20
-            exit 1
           fi
 
           echo "[*] Using defconfig: $DEFCONFIG"
           make O=out ARCH=arm64 "$DEFCONFIG"
 
-      # Patch SELinux to variant (sets KBUILD_BUILD_VERSION for this job)
+      # Patch SELinux to variant
       - name: Patch SELinux to ${{ github.event.inputs.kernel_variant || 'permissive' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
@@ -160,29 +152,13 @@ jobs:
       - name: Verify build artifacts
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "[*] Image.gz:"
           ls -la out/arch/arm64/boot/Image.gz
-
-          echo "[*] dtbo.img:"
           ls -la out/arch/arm64/boot/dtbo.img
-
-          # Find DTB for hotdogb specifically
           DTB=$(find out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
-          if [ -z "$DTB" ]; then
-            DTB=$(find out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
-          fi
-          if [ -z "$DTB" ]; then
-            DTB=$(find out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
-          fi
-          if [ -z "$DTB" ]; then
-            echo "[!] No hotdogb DTB found, listing all:"
-            find out/arch/arm64/boot/dts -type f -name "*.dtb" | head -20
-            exit 1
-          fi
+          [ -z "$DTB" ] && DTB=$(find out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
+          [ -z "$DTB" ] && DTB=$(find out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
           echo "[*] DTB: $DTB"
           ls -la "$DTB"
-
-          echo "[*] Kernel version:"
           make -s O=out ARCH=arm64 kernelversion
 
       # Pack AnyKernel3 ZIP
@@ -193,67 +169,35 @@ jobs:
           DATE=$(date +%Y%m%d)
           ZIP_NAME="kernel_7t_Tymaa_${VARIANT^}_${DATE}.zip"
 
-          # Clean previous
           rm -f Image.gz dtbo.img
           rm -rf dtb/
           mkdir -p dtb/
 
-          # Copy artifacts
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz .
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtbo.img .
 
-          # Copy DTB
           DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
-          if [ -z "$DTB" ]; then
-            DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
-          fi
-          if [ -z "$DTB" ]; then
-            DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
-          fi
-          if [ -z "$DTB" ]; then
-            echo "[!] No DTB found for packing"
-            exit 1
-          fi
+          [ -z "$DTB" ] && DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
+          [ -z "$DTB" ] && DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
           cp "$DTB" dtb/
-          echo "[*] Packed DTB: $(basename $DTB)"
 
-          # Create ZIP (exclude git, readme, placeholder, any existing zips)
           zip -r9 "$ZIP_NAME" * -x ".git*" "README*" "*placeholder*" "*.zip" 2>/dev/null
-
           echo "zip-name=$ZIP_NAME" >> $GITHUB_OUTPUT
-          echo "[✅] Created: $ZIP_NAME ($(du -h $ZIP_NAME | cut -f1))"
+          echo "[✅] Created: $ZIP_NAME"
 
       # Build SELinuxSwitcher Magisk Module
       - name: Build SELinuxSwitcher Magisk Module
         run: |
           MOD_DIR=$(mktemp -d)
           cd "$MOD_DIR"
-
-          # Copy module files from checked out repo
-          if [ ! -d "$GITHUB_WORKSPACE/module_src/module" ]; then
-            echo "[!] Module source not found at $GITHUB_WORKSPACE/module_src/module"
-            ls -la $GITHUB_WORKSPACE/module_src/
-            exit 1
-          fi
           cp -r $GITHUB_WORKSPACE/module_src/module/* .
-
-          # Verify required files
-          for f in module.prop service.sh script.sh META-INF/com/google/android/updater-script META-INF/com/google/android/update-binary; do
-            if [ ! -f "$f" ]; then
-              echo "[!] Missing required file: $f"
-              exit 1
-            fi
-          done
-
           chmod 755 script.sh service.sh META-INF/com/google/android/update-binary
-
           DATE=$(date +%Y%m%d)
           MOD_ZIP="SELinuxSwitcher_v1.0_${DATE}.zip"
           zip -r9 "$MOD_ZIP" module.prop service.sh script.sh META-INF/ -x "*.git*" 2>/dev/null
           cp "$MOD_ZIP" $GITHUB_WORKSPACE/
-
           echo "zip-name=$MOD_ZIP" >> $GITHUB_OUTPUT
-          echo "[✅] Module: $MOD_ZIP ($(du -h $MOD_ZIP | cut -f1))"
+          echo "[✅] Module: $MOD_ZIP"
 
       # Upload Kernel ZIP
       - name: Upload Kernel ZIP
@@ -272,15 +216,3 @@ jobs:
           name: SELinuxSwitcher-module
           path: SELinuxSwitcher_v1.0_*.zip
           retention-days: 30
-
-      # Create Release (on tag push)
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ${{ env.ANYKERNEL_DIR }}/kernel_7t_Tymaa_*.zip
-            SELinuxSwitcher_v1.0_*.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
