@@ -142,14 +142,23 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         env:
           KBUILD_BUILD_VERSION: ${{ env.KBUILD_BUILD_VERSION }}
+          LLVM: 1
+          CLANG_TRIPLE: aarch64-linux-gnu-
         run: |
           make -j$(nproc) O=out ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            AS=clang \
+            LD=ld.lld \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            READELF=llvm-readelf \
             HOSTCC=clang \
             HOSTCXX=clang++ \
+            HOSTAR=llvm-ar \
+            HOSTLD=ld.lld \
+            HOSTLDFLAGS="-fuse-ld=lld" \
             Image.gz dtbs
 
       # Verify build artifacts
