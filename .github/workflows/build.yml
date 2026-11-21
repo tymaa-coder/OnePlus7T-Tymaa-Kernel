@@ -16,7 +16,7 @@ on:
           - disabled
 
 env:
-  KERNEL_DIR: kernel_oneplus_sm8150
+  KERNEL_DIR: kernel_oneplus
   ANYKERNEL_DIR: AnyKernel3
   KBUILD_BUILD_USER: "Tymaa"
   KBUILD_BUILD_HOST: "GitHub-Actions"
@@ -32,11 +32,11 @@ jobs:
       module_zip: ${{ steps.upload-module.outputs.zip-name }}
 
     steps:
-      # Checkout kernel source
+      # Checkout kernel source - correct OnePlus repo
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          repository: OnePlusOSS/kernel_oneplus_sm8150
+          repository: OnePlusOSS/kernel_oneplus
           ref: oxygen-12
           path: ${{ env.KERNEL_DIR }}
           submodules: recursive
@@ -73,10 +73,19 @@ jobs:
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             device-tree-compiler
 
-      - name: Configure kernel (hotdogb-perf_defconfig)
+      - name: Configure kernel (hotdogb defconfig)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          make O=out ARCH=arm64 vendor/hotdogb-perf_defconfig
+          # Find correct defconfig for hotdogb (7T)
+          DEFCONFIG=$(find arch/arm64/configs -name "*hotdog*" -o -name "*hotdogb*" | head -1)
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find arch/arm64/configs -name "*oneplus*" | grep -E "perf|user" | head -1)
+          fi
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG="vendor/hotdogb-perf_defconfig"
+          fi
+          echo "[*] Using defconfig: $DEFCONFIG"
+          make O=out ARCH=arm64 "$DEFCONFIG"
 
       - name: Patch SELinux to ${{ github.event.inputs.kernel_variant || 'permissive' }}
         working-directory: ${{ env.KERNEL_DIR }}
@@ -121,7 +130,10 @@ jobs:
         run: |
           ls -la out/arch/arm64/boot/Image.gz
           ls -la out/arch/arm64/boot/dtbo.img
-          ls -la out/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb
+          # Find DTB
+          DTB=$(find out/arch/arm64/boot/dts -name "*hotdogb*" -o -name "*sm8150*oneplus*" | head -1)
+          echo "DTB: $DTB"
+          ls -la "$DTB"
           make -s O=out ARCH=arm64 kernelversion
 
       - name: Pack AnyKernel3 ZIP
@@ -137,7 +149,9 @@ jobs:
 
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz .
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtbo.img .
-          cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb dtb/
+          # Copy DTB
+          DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -name "*hotdogb*" -o -name "*sm8150*oneplus*" | head -1)
+          cp "$DTB" dtb/
 
           zip -r9 "$ZIP_NAME" * -x ".git*" "README*" "*placeholder*" "*.zip" 2>/dev/null
 
