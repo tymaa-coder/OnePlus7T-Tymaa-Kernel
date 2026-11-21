@@ -16,7 +16,7 @@ on:
           - disabled
 
 env:
-  KERNEL_DIR: kernel_oneplus
+  KERNEL_DIR: kernel_oneplus_sm8150
   ANYKERNEL_DIR: AnyKernel3
   KBUILD_BUILD_USER: "Tymaa"
   KBUILD_BUILD_HOST: "GitHub-Actions"
@@ -32,12 +32,12 @@ jobs:
       module_zip: ${{ steps.upload-module.outputs.zip-name }}
 
     steps:
-      # Checkout kernel source - correct OnePlus repo
+      # Checkout kernel source - LineageOS (working repo for sm8150/hotdogb)
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
-          repository: OnePlusOSS/kernel_oneplus
-          ref: oxygen-12
+          repository: LineageOS/android_kernel_oneplus_sm8150
+          ref: lineage-20  # Android 12/12.1/13 base
           path: ${{ env.KERNEL_DIR }}
           submodules: recursive
 
