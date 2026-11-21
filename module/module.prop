@@ -1,0 +1,8 @@
+id=selinuxswitcher
+name=SELinux Mode Switcher (Tymaa Kernel)
+version=1.0
+versionCode=1
+author=Tymaa
+description=Switch SELinux: 1=Enforcing 2=Permissive. Requires Tymaa kernel (4.14.180+Tymaa). Disabled requires separate kernel build.
+support=https://github.com/tymaa-coder/OnePlus7T-Tymaa-Kernel
+minMagisk=25000

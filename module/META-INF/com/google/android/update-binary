@@ -1,0 +1,12 @@
+#!/sbin/sh
+OUTFD=$2; ZIPFILE=$3
+ui_print() { if [ $OUTFD != 0 ]; then echo "ui_print $1" > /proc/self/fd/$OUTFD; echo "ui_print" > /proc/self/fd/$OUTFD; else echo "$1"; fi; }
+ui_print "Extracting SELinuxSwitcher..."
+mkdir -p /data/adb/modules/SELinuxSwitcher
+cd /data/adb/modules/SELinuxSwitcher
+unzip -o "$ZIPFILE" -x 'META-INF/*' >/dev/null 2>&1
+if [ -f META-INF/com/google/android/updater-script ]; then . META-INF/com/google/android/updater-script; fi
+chmod 755 script.sh service.sh 2>/dev/null
+mkdir -p bin; ln -sf script.sh bin/selinux-switch
+ui_print ""; ui_print "✅ SELinuxSwitcher installed!"; ui_print "Run: su -c selinux-switch"; ui_print ""
+exit 0

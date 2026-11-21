@@ -1,0 +1,10 @@
+ui_print("****************************************");
+ui_print("  SELinux Mode Switcher for Tymaa Kernel");
+ui_print("  1=Enforcing  2=Permissive  3=Disabled*");
+ui_print("*Disabled requires separate kernel build");
+ui_print("****************************************");
+run_program("/sbin/sh", "-c", "mkdir -p /data/adb/modules/SELinuxSwitcher/bin");
+run_program("/sbin/sh", "-c", "ln -sf /data/adb/modules/SELinuxSwitcher/script.sh /data/adb/modules/SELinuxSwitcher/bin/selinux-switch");
+run_program("/sbin/sh", "-c", "chmod 755 /data/adb/modules/SELinuxSwitcher/script.sh");
+run_program("/sbin/sh", "-c", "echo 2 > /data/adb/modules/SELinuxSwitcher/se_mode.conf");
+ui_print(""); ui_print("✅ Installed!"); ui_print("Usage: su -c selinux-switch"); ui_print("");
