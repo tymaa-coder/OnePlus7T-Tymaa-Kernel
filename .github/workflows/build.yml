@@ -86,21 +86,42 @@ jobs:
       - name: Configure kernel (hotdogb defconfig)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "[*] Available defconfigs:"
-          find arch/arm64/configs -name "*hotdog*" -o -name "*oneplus*" | sort
+          echo "[*] ==========================================="
+          echo "[*] ALL arm64 defconfigs:"
+          echo "[*] ==========================================="
+          find arch/arm64/configs -name "*defconfig" | sort
+          echo "[*] ==========================================="
+          echo "[*] hotdog-related defconfigs:"
+          echo "[*] ==========================================="
+          find arch/arm64/configs -name "*hotdog*" -o -name "*sm8150*" -o -name "*oneplus*" | sort
+          echo "[*] ==========================================="
 
-          DEFCONFIG=$(find arch/arm64/configs -name "*hotdogb*" | head -1)
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find arch/arm64/configs -name "*hotdog*" | head -1)
-          fi
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find arch/arm64/configs -name "*oneplus*" | grep -E "perf|user" | head -1)
-          fi
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG="vendor/hotdogb-perf_defconfig"
+          # Find correct defconfig for hotdogb (7T) - sm8150 chipset
+          DEFCONFIG=""
+
+          # Primary choice: vendor/sm8150-perf_defconfig (matches OxygenOS 12.1)
+          if [ -f "vendor/sm8150-perf_defconfig" ]; then
+            DEFCONFIG="vendor/sm8150-perf_defconfig"
           fi
 
-          echo "[*] Using defconfig: $DEFCONFIG"
+          # Fallback: any sm8150 perf defconfig
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find arch/arm64/configs -name "*sm8150-perf*" | head -1)
+          fi
+
+          # Fallback: sm8150_defconfig
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find arch/arm64/configs -name "*sm8150*" | head -1)
+          fi
+
+          echo "[*] Selected defconfig: $DEFCONFIG"
+
+          if [ -z "$DEFCONFIG" ]; then
+            echo "[!] ERROR: No sm8150 defconfig found!"
+            exit 1
+          fi
+
+          echo "[*] Running make $DEFCONFIG..."
           make O=out ARCH=arm64 "$DEFCONFIG"
 
       # Patch SELinux to variant
