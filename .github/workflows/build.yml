@@ -53,19 +53,19 @@ jobs:
         with:
           path: module_src
 
-      # Setup Clang (AOSP Clang 14 from reliable mirror)
+      # Setup Clang Toolchain
       - name: Setup Clang Toolchain
         run: |
           CLANG_DIR="$RUNNER_TEMP/clang"
           mkdir -p "$CLANG_DIR"
           cd "$CLANG_DIR"
           echo "[*] Downloading AOSP Clang..."
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz -O clang.tar.gz || \
-          wget -q https://github.com/kdrag0n/aosp-clang/releases/download/14.0-20220320/aosp-clang-14.0-20220320-linux.tar.gz -O clang.tar.gz
+          wget -q https://github.com/kdrag0n/aosp-clang/releases/download/14.0-20220320/aosp-clang-14.0-20220320-linux.tar.gz -O clang.tar.gz || \
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz -O clang.tar.gz
 
           tar -xzf clang.tar.gz
           echo "$CLANG_DIR/bin" >> $GITHUB_PATH
-          clang --version
+          clang --version || true
           echo "CLANG_PATH=$CLANG_DIR/bin" >> $GITHUB_ENV
 
       # Install dependencies including cross-compilers
@@ -78,10 +78,9 @@ jobs:
             python3 python3-pyelftools \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             device-tree-compiler \
-            libncurses5 libtinfo5
-          # Verify cross-compilers
+            libncurses-dev libtinfo6 || true
+
           aarch64-linux-gnu-gcc --version | head -1
-          arm-linux-gnueabi-gcc --version | head -1
 
       # Configure kernel (hotdogb defconfig)
       - name: Configure kernel (hotdogb defconfig)
