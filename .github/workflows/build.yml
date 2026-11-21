@@ -82,47 +82,34 @@ jobs:
 
           aarch64-linux-gnu-gcc --version | head -1
 
+      # Fix missing OnePlus vendor Kconfig references
+      - name: Fix missing OnePlus Kconfig sources
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          echo "[*] Cleaning up missing source Kconfig calls in OnePlus source tree..."
+          # Find all source statements pointing to missing files and comment them out
+          find . -name "Kconfig*" -type f | while read -r file; do
+            grep -E "^\s*source\s+" "$file" 2>/dev/null | while read -r line; do
+              target=$(echo "$line" | awk '{print $2}' | tr -d '"' | tr -d "'")
+              if [ -n "$target" ] && [ ! -f "$target" ]; then
+                echo "[-] Commenting out missing Kconfig target '$target' in $file"
+                # Create empty dummy file if directory exists, or comment out in Kconfig
+                dir_path=$(dirname "$target")
+                if [ -d "$dir_path" ]; then
+                  touch "$target"
+                else
+                  sed -i "s|^\s*source\s\+[\"']\?${target}[\"']\?|# source \"${target}\"|g" "$file"
+                fi
+              fi
+            done
+          done
+
       # Configure kernel (hotdogb defconfig)
       - name: Configure kernel (hotdogb defconfig)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "[*] ==========================================="
-          echo "[*] ALL arm64 defconfigs:"
-          echo "[*] ==========================================="
-          find arch/arm64/configs -name "*defconfig" | sort
-          echo "[*] ==========================================="
-          echo "[*] hotdog-related defconfigs:"
-          echo "[*] ==========================================="
-          find arch/arm64/configs -name "*hotdog*" -o -name "*sm8150*" -o -name "*oneplus*" | sort
-          echo "[*] ==========================================="
-
-          # Find correct defconfig for hotdogb (7T) - sm8150 chipset
-          DEFCONFIG=""
-
-          # Primary choice: vendor/sm8150-perf_defconfig (matches OxygenOS 12.1)
-          if [ -f "vendor/sm8150-perf_defconfig" ]; then
-            DEFCONFIG="vendor/sm8150-perf_defconfig"
-          fi
-
-          # Fallback: any sm8150 perf defconfig
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find arch/arm64/configs -name "*sm8150-perf*" | head -1)
-          fi
-
-          # Fallback: sm8150_defconfig
-          if [ -z "$DEFCONFIG" ]; then
-            DEFCONFIG=$(find arch/arm64/configs -name "*sm8150*" | head -1)
-          fi
-
-          echo "[*] Selected defconfig: $DEFCONFIG"
-
-          if [ -z "$DEFCONFIG" ]; then
-            echo "[!] ERROR: No sm8150 defconfig found!"
-            exit 1
-          fi
-
-          echo "[*] Running make $DEFCONFIG..."
-          make O=out ARCH=arm64 "$DEFCONFIG"
+          echo "[*] Selected defconfig: vendor/sm8150-perf_defconfig"
+          make O=out ARCH=arm64 vendor/sm8150-perf_defconfig
 
       # Patch SELinux to variant
       - name: Patch SELinux to ${{ github.event.inputs.kernel_variant || 'permissive' }}
