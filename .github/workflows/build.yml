@@ -87,13 +87,10 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           echo "[*] Cleaning up missing source Kconfig calls in OnePlus source tree..."
-          # Find all source statements pointing to missing files and comment them out
           find . -name "Kconfig*" -type f | while read -r file; do
             grep -E "^\s*source\s+" "$file" 2>/dev/null | while read -r line; do
               target=$(echo "$line" | awk '{print $2}' | tr -d '"' | tr -d "'")
               if [ -n "$target" ] && [ ! -f "$target" ]; then
-                echo "[-] Commenting out missing Kconfig target '$target' in $file"
-                # Create empty dummy file if directory exists, or comment out in Kconfig
                 dir_path=$(dirname "$target")
                 if [ -d "$dir_path" ]; then
                   touch "$target"
@@ -140,7 +137,7 @@ jobs:
 
           grep -E "CONFIG_SECURITY_SELINUX(_BOOTPARAM|_DEVELOP|_DISABLE)?=|CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE" out/.config
 
-      # Build Image.gz + dtbo.img
+      # Build Image.gz + dtbo.img (without piping into tail so errors fail immediately)
       - name: Build Image.gz + dtbo.img
         working-directory: ${{ env.KERNEL_DIR }}
         env:
@@ -153,7 +150,7 @@ jobs:
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
             HOSTCC=clang \
             HOSTCXX=clang++ \
-            Image.gz dtbo.img 2>&1 | tail -50
+            Image.gz dtbo.img
 
       # Verify build artifacts
       - name: Verify build artifacts
