@@ -20,13 +20,14 @@ env:
   ANYKERNEL_DIR: AnyKernel3
   KBUILD_BUILD_USER: "Tymaa"
   KBUILD_BUILD_HOST: "GitHub-Actions"
-  KBUILD_BUILD_VERSION: "+Tymaa"
+  # Base version, will be overridden per variant
+  KBUILD_BUILD_VERSION_BASE: "+Tymaa"
 
 jobs:
   build-kernel:
     name: Build Kernel (${{ github.event.inputs.kernel_variant || 'permissive' }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     outputs:
       kernel_zip: ${{ steps.upload-kernel.outputs.zip-name }}
       module_zip: ${{ steps.upload-module.outputs.zip-name }}
@@ -54,15 +55,19 @@ jobs:
         with:
           path: module_src
 
+      # Setup Google Clang (fixed version r487747c = Clang 17.0.1)
       - name: Setup Google Clang
         run: |
-          mkdir -p ~/toolchains
-          cd ~/toolchains
+          mkdir -p ~/toolchains/clang
+          cd ~/toolchains/clang
+          # Stable prebuilt URL with specific hash
           wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz -O clang.tar.gz
           tar -xzf clang.tar.gz
           echo "$HOME/toolchains/clang/bin" >> $GITHUB_PATH
           clang --version
+          echo "CLANG_PATH=$HOME/toolchains/clang/bin" >> $GITHUB_ENV
 
+      # Install dependencies including cross-compilers
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -71,22 +76,44 @@ jobs:
             dwarves pahole cpio zip unzip \
             python3 python3-pyelftools \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            device-tree-compiler
+            device-tree-compiler \
+            libncurses5 libtinfo5
+          # Verify cross-compilers
+          aarch64-linux-gnu-gcc --version | head -1
+          arm-linux-gnueabi-gcc --version | head -1
 
+      # Configure kernel (hotdogb defconfig)
       - name: Configure kernel (hotdogb defconfig)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
+          # List available defconfigs for debugging
+          echo "[*] Available defconfigs:"
+          find arch/arm64/configs -name "*hotdog*" -o -name "*oneplus*" | sort
+
           # Find correct defconfig for hotdogb (7T)
-          DEFCONFIG=$(find arch/arm64/configs -name "*hotdog*" -o -name "*hotdogb*" | head -1)
+          DEFCONFIG=$(find arch/arm64/configs -name "*hotdogb*" | head -1)
+          if [ -z "$DEFCONFIG" ]; then
+            DEFCONFIG=$(find arch/arm64/configs -name "*hotdog*" | head -1)
+          fi
           if [ -z "$DEFCONFIG" ]; then
             DEFCONFIG=$(find arch/arm64/configs -name "*oneplus*" | grep -E "perf|user" | head -1)
           fi
           if [ -z "$DEFCONFIG" ]; then
+            echo "[!] No hotdog/oneplus defconfig found, trying vendor/hotdogb-perf_defconfig"
             DEFCONFIG="vendor/hotdogb-perf_defconfig"
           fi
+
+          if [ ! -f "arch/arm64/configs/${DEFCONFIG}" ] && [ ! -f "${DEFCONFIG}" ]; then
+            echo "[!] Defconfig not found: $DEFCONFIG"
+            echo "[*] Trying all arm64 defconfigs..."
+            find arch/arm64/configs -name "*.config" -o -name "*defconfig" | head -20
+            exit 1
+          fi
+
           echo "[*] Using defconfig: $DEFCONFIG"
           make O=out ARCH=arm64 "$DEFCONFIG"
 
+      # Patch SELinux to variant (sets KBUILD_BUILD_VERSION for this job)
       - name: Patch SELinux to ${{ github.event.inputs.kernel_variant || 'permissive' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
@@ -101,41 +128,65 @@ jobs:
           case "$VARIANT" in
             permissive)
               scripts/config --file out/.config --set-str CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE "permissive"
-              export KBUILD_BUILD_VERSION="+Tymaa"
+              echo "KBUILD_BUILD_VERSION=+Tymaa" >> $GITHUB_ENV
               ;;
             enforcing)
               scripts/config --file out/.config --set-str CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE "enforcing"
-              export KBUILD_BUILD_VERSION="+Tymaa"
+              echo "KBUILD_BUILD_VERSION=+Tymaa" >> $GITHUB_ENV
               ;;
             disabled)
               scripts/config --file out/.config --set-str CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE "permissive"
-              export KBUILD_BUILD_VERSION="+Tymaa-Disabled"
+              echo "KBUILD_BUILD_VERSION=+Tymaa-Disabled" >> $GITHUB_ENV
               ;;
           esac
 
           grep -E "CONFIG_SECURITY_SELINUX(_BOOTPARAM|_DEVELOP|_DISABLE)?=|CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE" out/.config
 
+      # Build Image.gz + dtbo.img
       - name: Build Image.gz + dtbo.img
         working-directory: ${{ env.KERNEL_DIR }}
+        env:
+          KBUILD_BUILD_VERSION: ${{ env.KBUILD_BUILD_VERSION }}
         run: |
           make -j$(nproc) O=out ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-            Image.gz dtbo.img 2>&1 | tail -30
+            HOSTCC=clang \
+            HOSTCXX=clang++ \
+            Image.gz dtbo.img 2>&1 | tail -50
 
+      # Verify build artifacts
       - name: Verify build artifacts
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
+          echo "[*] Image.gz:"
           ls -la out/arch/arm64/boot/Image.gz
+
+          echo "[*] dtbo.img:"
           ls -la out/arch/arm64/boot/dtbo.img
-          # Find DTB
-          DTB=$(find out/arch/arm64/boot/dts -name "*hotdogb*" -o -name "*sm8150*oneplus*" | head -1)
-          echo "DTB: $DTB"
+
+          # Find DTB for hotdogb specifically
+          DTB=$(find out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
+          if [ -z "$DTB" ]; then
+            DTB=$(find out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
+          fi
+          if [ -z "$DTB" ]; then
+            DTB=$(find out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
+          fi
+          if [ -z "$DTB" ]; then
+            echo "[!] No hotdogb DTB found, listing all:"
+            find out/arch/arm64/boot/dts -type f -name "*.dtb" | head -20
+            exit 1
+          fi
+          echo "[*] DTB: $DTB"
           ls -la "$DTB"
+
+          echo "[*] Kernel version:"
           make -s O=out ARCH=arm64 kernelversion
 
+      # Pack AnyKernel3 ZIP
       - name: Pack AnyKernel3 ZIP
         working-directory: ${{ env.ANYKERNEL_DIR }}
         run: |
@@ -143,28 +194,57 @@ jobs:
           DATE=$(date +%Y%m%d)
           ZIP_NAME="kernel_7t_Tymaa_${VARIANT^}_${DATE}.zip"
 
+          # Clean previous
           rm -f Image.gz dtbo.img
           rm -rf dtb/
           mkdir -p dtb/
 
+          # Copy artifacts
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image.gz .
           cp ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtbo.img .
-          # Copy DTB
-          DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -name "*hotdogb*" -o -name "*sm8150*oneplus*" | head -1)
-          cp "$DTB" dtb/
 
+          # Copy DTB
+          DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*hotdogb*.dtb" | head -1)
+          if [ -z "$DTB" ]; then
+            DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*sm8150*hotdog*.dtb" | head -1)
+          fi
+          if [ -z "$DTB" ]; then
+            DTB=$(find ../${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dts -type f -name "*.dtb" | grep -i hotdog | head -1)
+          fi
+          if [ -z "$DTB" ]; then
+            echo "[!] No DTB found for packing"
+            exit 1
+          fi
+          cp "$DTB" dtb/
+          echo "[*] Packed DTB: $(basename $DTB)"
+
+          # Create ZIP (exclude git, readme, placeholder, any existing zips)
           zip -r9 "$ZIP_NAME" * -x ".git*" "README*" "*placeholder*" "*.zip" 2>/dev/null
 
           echo "zip-name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "[✅] Created: $ZIP_NAME ($(du -h $ZIP_NAME | cut -f1))"
 
+      # Build SELinuxSwitcher Magisk Module
       - name: Build SELinuxSwitcher Magisk Module
         run: |
           MOD_DIR=$(mktemp -d)
           cd "$MOD_DIR"
 
           # Copy module files from checked out repo
+          if [ ! -d "$GITHUB_WORKSPACE/module_src/module" ]; then
+            echo "[!] Module source not found at $GITHUB_WORKSPACE/module_src/module"
+            ls -la $GITHUB_WORKSPACE/module_src/
+            exit 1
+          fi
           cp -r $GITHUB_WORKSPACE/module_src/module/* .
+
+          # Verify required files
+          for f in module.prop service.sh script.sh META-INF/com/google/android/updater-script META-INF/com/google/android/update-binary; do
+            if [ ! -f "$f" ]; then
+              echo "[!] Missing required file: $f"
+              exit 1
+            fi
+          done
 
           chmod 755 script.sh service.sh META-INF/com/google/android/update-binary
 
@@ -176,6 +256,7 @@ jobs:
           echo "zip-name=$MOD_ZIP" >> $GITHUB_OUTPUT
           echo "[✅] Module: $MOD_ZIP ($(du -h $MOD_ZIP | cut -f1))"
 
+      # Upload Kernel ZIP
       - name: Upload Kernel ZIP
         id: upload-kernel
         uses: actions/upload-artifact@v4
@@ -184,6 +265,7 @@ jobs:
           path: ${{ env.ANYKERNEL_DIR }}/kernel_7t_Tymaa_*.zip
           retention-days: 30
 
+      # Upload Module ZIP
       - name: Upload Module ZIP
         id: upload-module
         uses: actions/upload-artifact@v4
@@ -192,6 +274,7 @@ jobs:
           path: SELinuxSwitcher_v1.0_*.zip
           retention-days: 30
 
+      # Create Release (on tag push)
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
